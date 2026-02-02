@@ -1,0 +1,29 @@
+[Unit]
+Description=TimeTrack-Transit Bus Departure Tracking API
+After=network.target
+
+[Service]
+Type=simple
+User=timetrack
+Group=timetrack
+WorkingDirectory=/opt/timetrack-transit
+Environment="PATH=/opt/timetrack-transit/venv/bin"
+EnvironmentFile=/opt/timetrack-transit/.env
+ExecStart=/opt/timetrack-transit/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/timetrack-transit/logs
+PrivateTmp=true
+
+# Logging
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=timetrack-transit
+
+[Install]
+WantedBy=multi-user.target
