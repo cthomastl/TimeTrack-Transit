@@ -10,6 +10,8 @@ from app.models.departure import (
     BusDepartureResponse,
     BusDepartureUpdate,
     LateDepartureSummary,
+    LogDepartureRequest,
+    LogDepartureResponse,
 )
 from app.services.departure_service import DepartureService, get_departure_service
 
@@ -222,3 +224,28 @@ def get_late_departure_report(
     - Details of each late departure
     """
     return service.get_late_departure_summary(start_date, end_date)
+
+
+@router.post(
+    "/log-departure",
+    response_model=LogDepartureResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Log a bus departure with delay calculation",
+)
+def log_departure(
+    request: LogDepartureRequest,
+    service: DepartureService = Depends(get_departure_service),
+) -> LogDepartureResponse:
+    """
+    Log a bus departure and automatically calculate if it was late.
+
+    This simplified endpoint accepts:
+    - **bus_id**: Unique identifier for the bus
+    - **scheduled_time**: When the bus was scheduled to depart
+    - **actual_time**: When the bus actually departed
+
+    The endpoint calculates the delay in minutes and sets `is_late` to True
+    if the delay exceeds the configured threshold (default: 5 minutes).
+    The departure is automatically saved to DynamoDB.
+    """
+    return service.log_departure(request)

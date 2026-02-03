@@ -1,0 +1,404 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TimeTrack-Transit | Bus Departure Tracker</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        'transit-blue': '#1e40af',
+                        'transit-gold': '#f59e0b',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .status-indicator {
+            transition: all 0.3s ease;
+        }
+        .pulse-late {
+            animation: pulse-red 2s infinite;
+        }
+        @keyframes pulse-red {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7); }
+            50% { box-shadow: 0 0 0 10px rgba(239, 68, 68, 0); }
+        }
+        .pulse-ontime {
+            animation: pulse-green 2s infinite;
+        }
+        @keyframes pulse-green {
+            0%, 100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0.7); }
+            50% { box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+        }
+    </style>
+</head>
+<body class="bg-gray-100 min-h-screen">
+    <!-- Header -->
+    <header class="bg-transit-blue text-white shadow-lg">
+        <div class="container mx-auto px-4 py-6">
+            <div class="flex items-center justify-between">
+                <div>
+                    <h1 class="text-2xl md:text-3xl font-bold">TimeTrack-Transit</h1>
+                    <p class="text-blue-200 text-sm md:text-base">Humble Transit Station, TX</p>
+                </div>
+                <div class="text-right">
+                    <p class="text-sm text-blue-200">Bus Departure Tracker</p>
+                    <p id="current-time" class="text-lg font-mono"></p>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <main class="container mx-auto px-4 py-8">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <!-- Log Departure Form -->
+            <div class="bg-white rounded-xl shadow-md p-6">
+                <h2 class="text-xl font-semibold text-gray-800 mb-6 flex items-center">
+                    <svg class="w-6 h-6 mr-2 text-transit-blue" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6v6m0 0v6m0-6h6m-6 0H6"/>
+                    </svg>
+                    Log Departure
+                </h2>
+
+                <form id="departure-form" class="space-y-5">
+                    <div>
+                        <label for="bus_id" class="block text-sm font-medium text-gray-700 mb-1">
+                            Bus ID
+                        </label>
+                        <input
+                            type="text"
+                            id="bus_id"
+                            name="bus_id"
+                            required
+                            placeholder="e.g., BUS-101"
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-transit-blue focus:border-transparent transition"
+                        >
+                    </div>
+
+                    <div>
+                        <label for="scheduled_time" class="block text-sm font-medium text-gray-700 mb-1">
+                            Scheduled Departure Time
+                        </label>
+                        <input
+                            type="datetime-local"
+                            id="scheduled_time"
+                            name="scheduled_time"
+                            required
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-transit-blue focus:border-transparent transition"
+                        >
+                    </div>
+
+                    <div>
+                        <label for="actual_time" class="block text-sm font-medium text-gray-700 mb-1">
+                            Actual Departure Time
+                        </label>
+                        <input
+                            type="datetime-local"
+                            id="actual_time"
+                            name="actual_time"
+                            required
+                            class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-transit-blue focus:border-transparent transition"
+                        >
+                    </div>
+
+                    <button
+                        type="submit"
+                        id="submit-btn"
+                        class="w-full bg-transit-blue text-white py-3 px-6 rounded-lg font-semibold hover:bg-blue-800 transition duration-200 flex items-center justify-center"
+                    >
+                        <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                        </svg>
+                        Log Departure
+                    </button>
+                </form>
+
+                <!-- Form Messages -->
+                <div id="form-message" class="mt-4 hidden"></div>
+            </div>
+
+            <!-- Status Panel -->
+            <div class="space-y-6">
+                <!-- Last Departure Status -->
+                <div class="bg-white rounded-xl shadow-md p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                        <svg class="w-6 h-6 mr-2 text-transit-gold" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                        </svg>
+                        Last Departure Status
+                    </h2>
+
+                    <div id="status-panel" class="text-center py-8">
+                        <div class="text-gray-400">
+                            <svg class="w-16 h-16 mx-auto mb-4 opacity-50" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 12h.01M12 12h.01M16 12h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                            </svg>
+                            <p>No departures logged yet</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Quick Stats -->
+                <div class="bg-white rounded-xl shadow-md p-6">
+                    <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                        <svg class="w-6 h-6 mr-2 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/>
+                        </svg>
+                        Session Statistics
+                    </h2>
+
+                    <div class="grid grid-cols-3 gap-4 text-center">
+                        <div class="bg-gray-50 rounded-lg p-4">
+                            <p id="total-logged" class="text-3xl font-bold text-transit-blue">0</p>
+                            <p class="text-sm text-gray-600">Total Logged</p>
+                        </div>
+                        <div class="bg-green-50 rounded-lg p-4">
+                            <p id="on-time-count" class="text-3xl font-bold text-green-600">0</p>
+                            <p class="text-sm text-gray-600">On Time</p>
+                        </div>
+                        <div class="bg-red-50 rounded-lg p-4">
+                            <p id="late-count" class="text-3xl font-bold text-red-600">0</p>
+                            <p class="text-sm text-gray-600">Late</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Recent Departures Table -->
+        <div class="mt-8 bg-white rounded-xl shadow-md p-6">
+            <h2 class="text-xl font-semibold text-gray-800 mb-4 flex items-center">
+                <svg class="w-6 h-6 mr-2 text-gray-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/>
+                </svg>
+                Recent Departures (This Session)
+            </h2>
+
+            <div class="overflow-x-auto">
+                <table class="w-full" id="departures-table">
+                    <thead class="bg-gray-50">
+                        <tr>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Bus ID</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Scheduled</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Actual</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Delay</th>
+                            <th class="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody id="departures-body" class="divide-y divide-gray-200">
+                        <tr id="no-data-row">
+                            <td colspan="5" class="px-4 py-8 text-center text-gray-400">
+                                No departures logged in this session
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="bg-gray-800 text-gray-400 py-6 mt-8">
+        <div class="container mx-auto px-4 text-center">
+            <p class="text-sm">TimeTrack-Transit &copy; 2026 | Humble Transit Station, TX</p>
+            <p class="text-xs mt-2">Tracking departures for better service</p>
+        </div>
+    </footer>
+
+    <script>
+        // Configuration - API URL is proxied through Nginx in Docker
+        // When running locally with docker-compose, use the nginx proxy
+        // When accessing the backend directly, use port 8000
+        const API_BASE_URL = window.location.port === '8000'
+            ? `${window.location.origin}/api/v1`
+            : '/api/v1';
+
+        // Session statistics
+        let sessionStats = {
+            total: 0,
+            onTime: 0,
+            late: 0
+        };
+
+        // Departures history for this session
+        let departuresHistory = [];
+
+        // Update current time display
+        function updateClock() {
+            const now = new Date();
+            document.getElementById('current-time').textContent = now.toLocaleTimeString('en-US', {
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit'
+            });
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Set default times to current time
+        function setDefaultTimes() {
+            const now = new Date();
+            const localISOTime = new Date(now.getTime() - now.getTimezoneOffset() * 60000)
+                .toISOString()
+                .slice(0, 16);
+            document.getElementById('scheduled_time').value = localISOTime;
+            document.getElementById('actual_time').value = localISOTime;
+        }
+        setDefaultTimes();
+
+        // Format datetime for display
+        function formatDateTime(dateStr) {
+            const date = new Date(dateStr);
+            return date.toLocaleString('en-US', {
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+        }
+
+        // Show form message
+        function showMessage(message, isError = false) {
+            const msgEl = document.getElementById('form-message');
+            msgEl.className = `mt-4 p-4 rounded-lg ${isError ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}`;
+            msgEl.textContent = message;
+            msgEl.classList.remove('hidden');
+
+            setTimeout(() => {
+                msgEl.classList.add('hidden');
+            }, 5000);
+        }
+
+        // Update status panel
+        function updateStatusPanel(data) {
+            const panel = document.getElementById('status-panel');
+            const isLate = data.is_late;
+
+            panel.innerHTML = `
+                <div class="status-indicator w-24 h-24 mx-auto rounded-full flex items-center justify-center mb-4 ${isLate ? 'bg-red-500 pulse-late' : 'bg-green-500 pulse-ontime'}">
+                    ${isLate
+                        ? '<svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>'
+                        : '<svg class="w-12 h-12 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>'
+                    }
+                </div>
+                <p class="text-2xl font-bold ${isLate ? 'text-red-600' : 'text-green-600'}">${isLate ? 'LATE' : 'ON TIME'}</p>
+                <p class="text-gray-600 mt-2">${data.bus_id}</p>
+                <p class="text-sm text-gray-500">${data.message}</p>
+                ${isLate ? `<p class="text-red-500 font-semibold mt-2">Delay: ${data.delay_minutes} minutes</p>` : ''}
+            `;
+        }
+
+        // Update statistics display
+        function updateStats() {
+            document.getElementById('total-logged').textContent = sessionStats.total;
+            document.getElementById('on-time-count').textContent = sessionStats.onTime;
+            document.getElementById('late-count').textContent = sessionStats.late;
+        }
+
+        // Add row to departures table
+        function addDepartureRow(data) {
+            const tbody = document.getElementById('departures-body');
+            const noDataRow = document.getElementById('no-data-row');
+
+            if (noDataRow) {
+                noDataRow.remove();
+            }
+
+            const row = document.createElement('tr');
+            row.className = 'hover:bg-gray-50 transition';
+            row.innerHTML = `
+                <td class="px-4 py-3 font-medium text-gray-900">${data.bus_id}</td>
+                <td class="px-4 py-3 text-gray-600">${formatDateTime(data.scheduled_time)}</td>
+                <td class="px-4 py-3 text-gray-600">${formatDateTime(data.actual_time)}</td>
+                <td class="px-4 py-3 ${data.delay_minutes > 0 ? 'text-red-600 font-medium' : 'text-gray-600'}">${data.delay_minutes} min</td>
+                <td class="px-4 py-3">
+                    <span class="px-3 py-1 rounded-full text-xs font-medium ${data.is_late ? 'bg-red-100 text-red-700' : 'bg-green-100 text-green-700'}">
+                        ${data.is_late ? 'Late' : 'On Time'}
+                    </span>
+                </td>
+            `;
+
+            tbody.insertBefore(row, tbody.firstChild);
+        }
+
+        // Handle form submission
+        document.getElementById('departure-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const submitBtn = document.getElementById('submit-btn');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `
+                <svg class="animate-spin w-5 h-5 mr-2" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                </svg>
+                Logging...
+            `;
+
+            const busId = document.getElementById('bus_id').value;
+            const scheduledTime = document.getElementById('scheduled_time').value;
+            const actualTime = document.getElementById('actual_time').value;
+
+            try {
+                const response = await fetch(`${API_BASE_URL}/log-departure`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        bus_id: busId,
+                        scheduled_time: new Date(scheduledTime).toISOString(),
+                        actual_time: new Date(actualTime).toISOString()
+                    })
+                });
+
+                if (!response.ok) {
+                    const errorData = await response.json();
+                    throw new Error(errorData.detail || 'Failed to log departure');
+                }
+
+                const data = await response.json();
+
+                // Update UI
+                updateStatusPanel(data);
+                addDepartureRow(data);
+
+                // Update stats
+                sessionStats.total++;
+                if (data.is_late) {
+                    sessionStats.late++;
+                } else {
+                    sessionStats.onTime++;
+                }
+                updateStats();
+
+                // Store in history
+                departuresHistory.unshift(data);
+
+                showMessage(data.message);
+
+                // Reset form with new times
+                document.getElementById('bus_id').value = '';
+                setDefaultTimes();
+
+            } catch (error) {
+                console.error('Error:', error);
+                showMessage(error.message || 'Failed to log departure. Please try again.', true);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `
+                    <svg class="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                    </svg>
+                    Log Departure
+                `;
+            }
+        });
+    </script>
+</body>
+</html>

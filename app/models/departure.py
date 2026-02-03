@@ -118,3 +118,23 @@ class LateDepartureSummary(BaseModel):
     on_time_percentage: float
     average_delay_minutes: float
     late_departure_details: list[LateDepartureReport]
+
+
+class LogDepartureRequest(BaseModel):
+    """Schema for the simplified /log-departure endpoint."""
+
+    bus_id: str = Field(..., description="Unique identifier for the bus")
+    scheduled_time: datetime = Field(..., description="Scheduled departure time")
+    actual_time: datetime = Field(..., description="Actual departure time")
+
+
+class LogDepartureResponse(BaseModel):
+    """Response schema for the /log-departure endpoint."""
+
+    departure_id: str
+    bus_id: str
+    scheduled_time: datetime
+    actual_time: datetime
+    delay_minutes: int
+    is_late: bool
+    message: str

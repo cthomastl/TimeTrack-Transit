@@ -29,12 +29,40 @@ TimeTrack-Transit is a backend API service that tracks bus departures from the H
 - `GET /health` - Health check
 
 ### Departures
+- `POST /api/v1/log-departure` - **Simplified endpoint**: Log departure with automatic delay calculation
 - `POST /api/v1/departures` - Schedule a new departure
 - `GET /api/v1/departures/{id}` - Get departure by ID
 - `PUT /api/v1/departures/{id}` - Update departure
 - `DELETE /api/v1/departures/{id}` - Delete departure
 - `POST /api/v1/departures/{id}/record-departure` - Record actual departure time
 - `POST /api/v1/departures/{id}/cancel` - Cancel departure
+
+### Log Departure (Simplified)
+
+The `/api/v1/log-departure` endpoint provides a simple way to log departures:
+
+```bash
+curl -X POST http://localhost:8000/api/v1/log-departure \
+  -H "Content-Type: application/json" \
+  -d '{
+    "bus_id": "BUS-101",
+    "scheduled_time": "2026-02-03T08:00:00",
+    "actual_time": "2026-02-03T08:07:00"
+  }'
+```
+
+Response:
+```json
+{
+  "departure_id": "uuid-here",
+  "bus_id": "BUS-101",
+  "scheduled_time": "2026-02-03T08:00:00",
+  "actual_time": "2026-02-03T08:07:00",
+  "delay_minutes": 7,
+  "is_late": true,
+  "message": "Bus BUS-101 departed 7 minutes late."
+}
+```
 
 ### Queries
 - `GET /api/v1/departures?date=YYYY-MM-DD` - Get departures by date
@@ -48,10 +76,25 @@ TimeTrack-Transit is a backend API service that tracks bus departures from the H
 
 ### Prerequisites
 
-- Python 3.11+
+- Python 3.14+ (or Docker)
 - AWS credentials (or DynamoDB Local)
 
-### Setup
+### Quick Start with Docker (Recommended)
+
+The easiest way to run the complete application locally:
+
+```bash
+# Start all services (backend, frontend, DynamoDB-Local)
+docker-compose up --build
+
+# Access the application:
+# - Frontend Dashboard: http://localhost
+# - Backend API: http://localhost:8000
+# - API Documentation: http://localhost:8000/docs
+# - DynamoDB Local: http://localhost:8001
+```
+
+### Manual Setup
 
 1. Clone the repository:
 ```bash
@@ -145,6 +188,158 @@ The application uses a single-table design:
 - **DepartureDateIndex**: Query by date
 - **StatusDateIndex**: Query by status and date
 - **RouteDateIndex**: Query by route and date
+
+## AWS Security: IAM Instance Profiles
+
+### Why Use IAM Instance Profiles?
+
+**Never hardcode AWS credentials** in your application code, environment variables, or configuration files. Instead, use IAM Instance Profiles to securely grant your EC2 instances the permissions they need.
+
+### How IAM Instance Profiles Work
+
+1. **IAM Role**: A role defines what AWS services and actions are permitted (e.g., DynamoDB read/write)
+2. **Instance Profile**: A container that passes the IAM role to an EC2 instance
+3. **Automatic Credentials**: AWS SDK (boto3) automatically retrieves temporary credentials from the EC2 metadata service
+
+When your EC2 instance has an instance profile attached, the AWS SDK automatically:
+- Retrieves temporary credentials from `http://169.254.169.254/latest/meta-data/iam/security-credentials/`
+- Refreshes credentials before they expire
+- Uses these credentials for all AWS API calls
+
+### Setting Up IAM Instance Profile
+
+#### 1. Create an IAM Policy for DynamoDB Access
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable",
+        "dynamodb:CreateTable"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:us-east-1:YOUR_ACCOUNT_ID:table/TimeTrack-Transit-DB",
+        "arn:aws:dynamodb:us-east-1:YOUR_ACCOUNT_ID:table/TimeTrack-Transit-DB/index/*"
+      ]
+    }
+  ]
+}
+```
+
+#### 2. Create an IAM Role
+
+```bash
+# Create the trust policy for EC2
+cat > trust-policy.json << 'EOF'
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      },
+      "Action": "sts:AssumeRole"
+    }
+  ]
+}
+EOF
+
+# Create the IAM role
+aws iam create-role \
+  --role-name TimeTrack-Transit-EC2-Role \
+  --assume-role-policy-document file://trust-policy.json
+
+# Attach the DynamoDB policy (create it first or use inline)
+aws iam put-role-policy \
+  --role-name TimeTrack-Transit-EC2-Role \
+  --policy-name DynamoDBAccess \
+  --policy-document file://dynamodb-policy.json
+```
+
+#### 3. Create Instance Profile and Attach Role
+
+```bash
+# Create the instance profile
+aws iam create-instance-profile \
+  --instance-profile-name TimeTrack-Transit-Profile
+
+# Add the role to the instance profile
+aws iam add-role-to-instance-profile \
+  --instance-profile-name TimeTrack-Transit-Profile \
+  --role-name TimeTrack-Transit-EC2-Role
+```
+
+#### 4. Attach to EC2 Instance
+
+**When launching a new instance:**
+```bash
+aws ec2 run-instances \
+  --image-id ami-xxxxx \
+  --instance-type t3.micro \
+  --iam-instance-profile Name=TimeTrack-Transit-Profile \
+  --subnet-id subnet-xxxxx \
+  ...
+```
+
+**For an existing instance:**
+```bash
+aws ec2 associate-iam-instance-profile \
+  --instance-id i-xxxxx \
+  --iam-instance-profile Name=TimeTrack-Transit-Profile
+```
+
+### Application Configuration for Production
+
+When deploying to EC2 with an instance profile, your `.env` file should NOT contain AWS credentials:
+
+```bash
+# .env for EC2 with Instance Profile
+APP_ENV=production
+AWS_REGION=us-east-1
+DYNAMODB_TABLE_NAME=TimeTrack-Transit-DB
+# NO AWS_ACCESS_KEY_ID or AWS_SECRET_ACCESS_KEY needed!
+```
+
+The boto3 SDK in the application automatically uses the instance profile credentials. The code in `app/database/dynamodb.py` is already configured to work with instance profiles:
+
+```python
+# When aws_access_key_id and aws_secret_access_key are not set,
+# boto3 automatically uses the instance profile credentials
+client_kwargs = {"region_name": settings.aws_region}
+
+if settings.aws_access_key_id and settings.aws_secret_access_key:
+    # Only used for local development
+    client_kwargs["aws_access_key_id"] = settings.aws_access_key_id
+    client_kwargs["aws_secret_access_key"] = settings.aws_secret_access_key
+```
+
+### Security Best Practices
+
+1. **Principle of Least Privilege**: Only grant permissions the application actually needs
+2. **Use Resource-Level Permissions**: Restrict access to specific tables, not `*`
+3. **Enable CloudTrail**: Monitor API calls made by your application
+4. **VPC Endpoints**: Use DynamoDB VPC endpoints to keep traffic within AWS network
+5. **Regular Rotation**: Instance profile credentials are automatically rotated by AWS
+
+### Verifying Instance Profile from EC2
+
+```bash
+# Check if instance has an IAM role attached
+curl http://169.254.169.254/latest/meta-data/iam/security-credentials/
+
+# Get the current credentials (for debugging only)
+curl http://169.254.169.254/latest/meta-data/iam/security-credentials/TimeTrack-Transit-EC2-Role
+```
 
 ## License
 

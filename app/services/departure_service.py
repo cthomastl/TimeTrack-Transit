@@ -15,6 +15,8 @@ from app.models.departure import (
     DepartureStatus,
     LateDepartureReport,
     LateDepartureSummary,
+    LogDepartureRequest,
+    LogDepartureResponse,
 )
 
 logger = logging.getLogger(__name__)
@@ -214,6 +216,66 @@ class DepartureService:
     def delete_departure(self, departure_id: str) -> bool:
         """Delete a departure record."""
         return self.db.delete_departure(departure_id)
+
+    def log_departure(self, request: LogDepartureRequest) -> LogDepartureResponse:
+        """
+        Log a departure with automatic delay calculation.
+
+        This simplified method accepts bus_id, scheduled_time, and actual_time,
+        calculates the delay, determines if the bus was late, and saves to DynamoDB.
+        """
+        # Calculate delay in minutes
+        delay = request.actual_time - request.scheduled_time
+        delay_minutes = int(delay.total_seconds() / 60)
+
+        # Determine if late (negative delay means early, which is on-time)
+        is_late = delay_minutes > self.late_threshold_minutes
+
+        # Determine status
+        if delay_minutes <= 0:
+            status = DepartureStatus.ON_TIME
+            delay_minutes = 0
+        elif delay_minutes <= self.late_threshold_minutes:
+            status = DepartureStatus.ON_TIME
+        else:
+            status = DepartureStatus.LATE
+
+        # Create and save the departure record
+        departure = BusDeparture(
+            bus_id=request.bus_id,
+            route_number="N/A",  # Simplified endpoint doesn't require route
+            scheduled_departure=request.scheduled_time,
+            actual_departure=request.actual_time,
+            destination="N/A",  # Simplified endpoint doesn't require destination
+            station_name=self.settings.station_name,
+            status=status,
+            delay_minutes=max(0, delay_minutes),
+        )
+
+        saved = self.db.put_departure(departure)
+
+        # Generate response message
+        if is_late:
+            message = f"Bus {request.bus_id} departed {delay_minutes} minutes late."
+        elif delay_minutes < 0:
+            message = f"Bus {request.bus_id} departed {abs(delay_minutes)} minutes early."
+        else:
+            message = f"Bus {request.bus_id} departed on time."
+
+        logger.info(
+            f"Logged departure for bus {request.bus_id}: "
+            f"delay={delay_minutes}min, is_late={is_late}"
+        )
+
+        return LogDepartureResponse(
+            departure_id=saved.departure_id,
+            bus_id=saved.bus_id,
+            scheduled_time=request.scheduled_time,
+            actual_time=request.actual_time,
+            delay_minutes=max(0, delay_minutes),
+            is_late=is_late,
+            message=message,
+        )
 
     def _to_response(self, departure: BusDeparture) -> BusDepartureResponse:
         """Convert BusDeparture model to API response."""
