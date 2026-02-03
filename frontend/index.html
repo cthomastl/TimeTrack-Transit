@@ -211,13 +211,8 @@
     </footer>
 
     <script>
-        // Configuration - Set your backend URL here
-        // For local development with separate frontend: http://localhost:8000/api/v1
-        // For Docker Compose (nginx proxy): /api/v1
-        // For production: https://your-api-domain.com/api/v1
-        const API_BASE_URL = window.location.port === '80' || window.location.port === ''
-            ? '/api/v1'  // Nginx proxy in Docker
-            : 'http://localhost:8000/api/v1';  // Direct backend access
+        // Configuration - Production backend on AWS App Runner
+        const API_BASE_URL = 'https://v7pj3r3fym.us-east-1.awsapprunner.com/api/v1';
 
         // Session statistics
         let sessionStats = {
