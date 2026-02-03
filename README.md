@@ -189,6 +189,127 @@ The application uses a single-table design:
 - **StatusDateIndex**: Query by status and date
 - **RouteDateIndex**: Query by route and date
 
+## Frontend Deployment to AWS App Runner
+
+Deploy the frontend as a Docker container to AWS App Runner for a fully managed, auto-scaling solution.
+
+### Step 1: Set Your Backend API URL
+
+Edit `frontend/index.html` line 220 to point to your backend:
+
+```javascript
+const API_BASE_URL = 'https://your-backend-api.us-east-1.awsapprunner.com/api/v1';
+```
+
+### Step 2: Create ECR Repository
+
+```bash
+# Set variables
+AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+AWS_REGION=us-east-1
+
+# Create ECR repository
+aws ecr create-repository \
+  --repository-name timetrack-frontend \
+  --region $AWS_REGION
+```
+
+### Step 3: Build and Push Docker Image
+
+```bash
+# Authenticate Docker to ECR
+aws ecr get-login-password --region $AWS_REGION | \
+  docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+# Build the image
+cd frontend
+docker build -t timetrack-frontend .
+
+# Tag for ECR
+docker tag timetrack-frontend:latest \
+  $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
+
+# Push to ECR
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
+```
+
+### Step 4: Create App Runner Service
+
+```bash
+# Create App Runner access role for ECR (one-time setup)
+aws iam create-role \
+  --role-name AppRunnerECRAccessRole \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {"Service": "build.apprunner.amazonaws.com"},
+      "Action": "sts:AssumeRole"
+    }]
+  }'
+
+aws iam attach-role-policy \
+  --role-name AppRunnerECRAccessRole \
+  --policy-arn arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+
+# Create the App Runner service
+aws apprunner create-service \
+  --service-name timetrack-frontend \
+  --source-configuration '{
+    "AuthenticationConfiguration": {
+      "AccessRoleArn": "arn:aws:iam::'$AWS_ACCOUNT_ID':role/AppRunnerECRAccessRole"
+    },
+    "AutoDeploymentsEnabled": true,
+    "ImageRepository": {
+      "ImageIdentifier": "'$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/timetrack-frontend:latest",
+      "ImageRepositoryType": "ECR",
+      "ImageConfiguration": {
+        "Port": "80"
+      }
+    }
+  }' \
+  --instance-configuration '{
+    "Cpu": "0.25 vCPU",
+    "Memory": "0.5 GB"
+  }'
+```
+
+### Step 5: Get Your App Runner URL
+
+```bash
+# Check service status and get URL
+aws apprunner describe-service \
+  --service-arn arn:aws:apprunner:$AWS_REGION:$AWS_ACCOUNT_ID:service/timetrack-frontend \
+  --query 'Service.ServiceUrl' \
+  --output text
+```
+
+Your frontend will be available at: `https://xxxxxxxx.us-east-1.awsapprunner.com`
+
+### Updating the Frontend
+
+After making changes, rebuild and push:
+
+```bash
+cd frontend
+docker build -t timetrack-frontend .
+docker tag timetrack-frontend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
+
+# App Runner auto-deploys if AutoDeploymentsEnabled is true
+# Or trigger manually:
+aws apprunner start-deployment \
+  --service-arn arn:aws:apprunner:$AWS_REGION:$AWS_ACCOUNT_ID:service/timetrack-frontend
+```
+
+### App Runner Pricing
+
+- **Build**: $0.005 per build minute
+- **Compute**: $0.064 per vCPU-hour, $0.007 per GB-hour
+- **Automatic scale-to-zero**: No charge when idle (after provisioned instances setting)
+
+For a static frontend with minimal traffic, expect ~$5-10/month.
+
 ## AWS Security: IAM Instance Profiles
 
 ### Why Use IAM Instance Profiles?
