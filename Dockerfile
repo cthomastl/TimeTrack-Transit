@@ -1,7 +1,7 @@
 # TimeTrack-Transit Backend Dockerfile
-# Python 3.14 FastAPI Application
+# Python 3.12 FastAPI Application
 
-FROM python:3.14-slim
+FROM python:3.12-slim
 
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
