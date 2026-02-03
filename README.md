@@ -189,54 +189,130 @@ The application uses a single-table design:
 - **StatusDateIndex**: Query by status and date
 - **RouteDateIndex**: Query by route and date
 
-## Frontend Deployment to AWS App Runner
+## Frontend Deployment to S3
 
-Deploy the frontend as a Docker container to AWS App Runner for a fully managed, auto-scaling solution.
+Host the static frontend on S3 for simple, low-cost hosting.
 
-### Step 1: Set Your Backend API URL
-
-Edit `frontend/index.html` line 220 to point to your backend:
-
-```javascript
-const API_BASE_URL = 'https://your-backend-api.us-east-1.awsapprunner.com/api/v1';
-```
-
-### Step 2: Create ECR Repository
+### Step 1: Create S3 Bucket
 
 ```bash
-# Set variables
+AWS_REGION=us-east-1
+BUCKET_NAME=timetrack-transit-frontend
+
+# Create bucket
+aws s3 mb s3://$BUCKET_NAME --region $AWS_REGION
+
+# Enable static website hosting
+aws s3 website s3://$BUCKET_NAME --index-document index.html
+
+# Set public access policy
+aws s3api put-bucket-policy --bucket $BUCKET_NAME --policy '{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Principal": "*",
+    "Action": "s3:GetObject",
+    "Resource": "arn:aws:s3:::'$BUCKET_NAME'/*"
+  }]
+}'
+```
+
+### Step 2: Update Backend URL
+
+Edit `frontend/index.html` line 220 to point to your App Runner backend:
+
+```javascript
+const API_BASE_URL = 'https://xxxxxxxx.us-east-1.awsapprunner.com/api/v1';
+```
+
+### Step 3: Upload to S3
+
+```bash
+aws s3 cp frontend/index.html s3://$BUCKET_NAME/
+```
+
+Your frontend will be at: `http://$BUCKET_NAME.s3-website-$AWS_REGION.amazonaws.com`
+
+### Optional: CloudFront for HTTPS
+
+For production with HTTPS and caching, add CloudFront in front of S3.
+
+## Backend Deployment to AWS App Runner
+
+Deploy the FastAPI backend as a Docker container to AWS App Runner.
+
+### Step 1: Create ECR Repository
+
+```bash
 AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
 AWS_REGION=us-east-1
 
-# Create ECR repository
 aws ecr create-repository \
-  --repository-name timetrack-frontend \
+  --repository-name timetrack-backend \
   --region $AWS_REGION
 ```
 
-### Step 3: Build and Push Docker Image
+### Step 2: Build and Push Docker Image
 
 ```bash
 # Authenticate Docker to ECR
 aws ecr get-login-password --region $AWS_REGION | \
   docker login --username AWS --password-stdin $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
 
-# Build the image
-cd frontend
-docker build -t timetrack-frontend .
+# Build the image (from project root)
+docker build -t timetrack-backend .
 
 # Tag for ECR
-docker tag timetrack-frontend:latest \
-  $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
+docker tag timetrack-backend:latest \
+  $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-backend:latest
 
 # Push to ECR
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-backend:latest
 ```
 
-### Step 4: Create App Runner Service
+### Step 3: Create IAM Role for App Runner
+
+App Runner needs a role to access DynamoDB:
 
 ```bash
-# Create App Runner access role for ECR (one-time setup)
+# Create instance role for App Runner (to access DynamoDB)
+aws iam create-role \
+  --role-name TimeTrack-AppRunner-InstanceRole \
+  --assume-role-policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Principal": {"Service": "tasks.apprunner.amazonaws.com"},
+      "Action": "sts:AssumeRole"
+    }]
+  }'
+
+# Attach DynamoDB permissions
+aws iam put-role-policy \
+  --role-name TimeTrack-AppRunner-InstanceRole \
+  --policy-name DynamoDBAccess \
+  --policy-document '{
+    "Version": "2012-10-17",
+    "Statement": [{
+      "Effect": "Allow",
+      "Action": [
+        "dynamodb:PutItem",
+        "dynamodb:GetItem",
+        "dynamodb:UpdateItem",
+        "dynamodb:DeleteItem",
+        "dynamodb:Query",
+        "dynamodb:Scan",
+        "dynamodb:DescribeTable",
+        "dynamodb:CreateTable"
+      ],
+      "Resource": [
+        "arn:aws:dynamodb:'$AWS_REGION':'$AWS_ACCOUNT_ID':table/TimeTrack-Transit-DB",
+        "arn:aws:dynamodb:'$AWS_REGION':'$AWS_ACCOUNT_ID':table/TimeTrack-Transit-DB/index/*"
+      ]
+    }]
+  }'
+
+# Create ECR access role (for pulling images)
 aws iam create-role \
   --role-name AppRunnerECRAccessRole \
   --assume-role-policy-document '{
@@ -251,64 +327,76 @@ aws iam create-role \
 aws iam attach-role-policy \
   --role-name AppRunnerECRAccessRole \
   --policy-arn arn:aws:iam::aws:policy/service-role/AWSAppRunnerServicePolicyForECRAccess
+```
 
-# Create the App Runner service
+### Step 4: Create App Runner Service
+
+```bash
 aws apprunner create-service \
-  --service-name timetrack-frontend \
+  --service-name timetrack-backend \
   --source-configuration '{
     "AuthenticationConfiguration": {
       "AccessRoleArn": "arn:aws:iam::'$AWS_ACCOUNT_ID':role/AppRunnerECRAccessRole"
     },
     "AutoDeploymentsEnabled": true,
     "ImageRepository": {
-      "ImageIdentifier": "'$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/timetrack-frontend:latest",
+      "ImageIdentifier": "'$AWS_ACCOUNT_ID'.dkr.ecr.'$AWS_REGION'.amazonaws.com/timetrack-backend:latest",
       "ImageRepositoryType": "ECR",
       "ImageConfiguration": {
-        "Port": "80"
+        "Port": "8000",
+        "RuntimeEnvironmentVariables": {
+          "APP_ENV": "production",
+          "AWS_REGION": "'$AWS_REGION'",
+          "DYNAMODB_TABLE_NAME": "TimeTrack-Transit-DB",
+          "STATION_NAME": "Humble Transit Station",
+          "STATION_TIMEZONE": "America/Chicago",
+          "LATE_THRESHOLD_MINUTES": "5"
+        }
       }
     }
   }' \
   --instance-configuration '{
     "Cpu": "0.25 vCPU",
-    "Memory": "0.5 GB"
+    "Memory": "0.5 GB",
+    "InstanceRoleArn": "arn:aws:iam::'$AWS_ACCOUNT_ID':role/TimeTrack-AppRunner-InstanceRole"
   }'
 ```
 
-### Step 5: Get Your App Runner URL
+### Step 5: Get Your Backend URL
 
 ```bash
-# Check service status and get URL
 aws apprunner describe-service \
-  --service-arn arn:aws:apprunner:$AWS_REGION:$AWS_ACCOUNT_ID:service/timetrack-frontend \
+  --service-arn arn:aws:apprunner:$AWS_REGION:$AWS_ACCOUNT_ID:service/timetrack-backend \
   --query 'Service.ServiceUrl' \
   --output text
 ```
 
-Your frontend will be available at: `https://xxxxxxxx.us-east-1.awsapprunner.com`
+Your API will be at: `https://xxxxxxxx.us-east-1.awsapprunner.com`
+- Health check: `https://xxxxxxxx.us-east-1.awsapprunner.com/health`
+- API docs: `https://xxxxxxxx.us-east-1.awsapprunner.com/docs`
 
-### Updating the Frontend
+### Step 6: Update Frontend with Backend URL
 
-After making changes, rebuild and push:
+Update `frontend/index.html` and re-upload to S3:
 
 ```bash
-cd frontend
-docker build -t timetrack-frontend .
-docker tag timetrack-frontend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
-docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-frontend:latest
-
-# App Runner auto-deploys if AutoDeploymentsEnabled is true
-# Or trigger manually:
-aws apprunner start-deployment \
-  --service-arn arn:aws:apprunner:$AWS_REGION:$AWS_ACCOUNT_ID:service/timetrack-frontend
+# Edit frontend/index.html line 220 with your App Runner URL
+aws s3 cp frontend/index.html s3://$BUCKET_NAME/
 ```
 
-### App Runner Pricing
+### Updating the Backend
 
-- **Build**: $0.005 per build minute
-- **Compute**: $0.064 per vCPU-hour, $0.007 per GB-hour
-- **Automatic scale-to-zero**: No charge when idle (after provisioned instances setting)
+After code changes, rebuild and push:
 
-For a static frontend with minimal traffic, expect ~$5-10/month.
+```bash
+docker build -t timetrack-backend .
+docker tag timetrack-backend:latest $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-backend:latest
+docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/timetrack-backend:latest
+
+# Auto-deploys if enabled, or trigger manually:
+aws apprunner start-deployment \
+  --service-arn arn:aws:apprunner:$AWS_REGION:$AWS_ACCOUNT_ID:service/timetrack-backend
+```
 
 ## AWS Security: IAM Instance Profiles
 
